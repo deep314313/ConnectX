@@ -4,15 +4,13 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const connectDB = require('./config/db');
+const initializeSocket = require('./socket');
 
 // Import routes
 const roomRoutes = require('./routes/roomRoutes');
 
 // Load environment variables
 dotenv.config();
-
-// Connect to MongoDB
-connectDB();
 
 // Initialize Express app
 const app = express();
@@ -30,31 +28,40 @@ const io = new Server(server, {
   }
 });
 
-// Socket.io connection handler
-io.on('connection', (socket) => {
-  console.log('A user connected:', socket.id);
+// Connect to MongoDB and initialize socket
+const startServer = async () => {
+  try {
+    // Connect to MongoDB
+    await connectDB();
+    console.log('MongoDB connected successfully');
 
-  socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id);
-  });
-});
+    // Initialize socket handlers
+    initializeSocket(io);
+    console.log('Socket.io handlers initialized');
 
-// Routes
-app.get('/', (req, res) => {
-  res.json({ message: 'ConnectX Server is running' });
-});
+    // Routes
+    app.get('/', (req, res) => {
+      res.json({ message: 'ConnectX Server is running' });
+    });
 
-// API routes
-app.use('/api/rooms', roomRoutes);
+    // API routes
+    app.use('/api/rooms', roomRoutes);
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ message: 'Something went wrong!' });
-});
+    // Error handling middleware
+    app.use((err, req, res, next) => {
+      console.error(err.stack);
+      res.status(500).json({ message: 'Something went wrong!' });
+    });
 
-// Start server
-const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-}); 
+    // Start server
+    const PORT = process.env.PORT || 5000;
+    server.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+    });
+  } catch (error) {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  }
+};
+
+startServer(); 

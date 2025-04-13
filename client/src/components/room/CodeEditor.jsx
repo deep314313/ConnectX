@@ -1,13 +1,25 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Editor from '@monaco-editor/react';
 import { Play, RotateCcw } from 'lucide-react';
+import {
+  requestCodeState,
+  onInitialCode,
+  emitCodeChange,
+  onCodeChange,
+  emitCursorPosition,
+  onCursorUpdate,
+  emitSelection,
+  onSelectionUpdate
+} from '../../services/socket';
 
-function CodeEditor() {
+function CodeEditor({ socket, roomId }) {
   const [language, setLanguage] = useState('javascript');
   const [theme, setTheme] = useState('vs-dark');
   const [code, setCode] = useState('// Start coding here...');
   const [input, setInput] = useState('');
   const [output, setOutput] = useState('');
+  const [editorInstance, setEditorInstance] = useState(null);
+  const [decorations, setDecorations] = useState([]);
 
   const languages = [
     { id: 'javascript', label: 'JavaScript' },
@@ -22,9 +34,90 @@ function CodeEditor() {
     { id: 'rust', label: 'Rust' },
   ];
 
+  useEffect(() => {
+    if (!socket || !roomId) return;
+
+    // Request initial code state
+    requestCodeState(roomId);
+
+    // Listen for initial code
+    onInitialCode(({ code: initialCode }) => {
+      if (initialCode) {
+        setCode(initialCode);
+      }
+    });
+
+    // Listen for code changes
+    onCodeChange(({ userId, userName, change }) => {
+      if (change.code !== code) {
+        setCode(change.code);
+      }
+    });
+
+    // Listen for cursor updates
+    onCursorUpdate(({ userId, userName, cursor }) => {
+      if (editorInstance) {
+        // Remove old cursor for this user
+        setDecorations(prev => 
+          prev.filter(d => !d.userId || d.userId !== userId)
+        );
+
+        // Add new cursor
+        const newDecoration = {
+          userId,
+          range: cursor,
+          options: {
+            className: 'cursor-decoration',
+            hoverMessage: { value: userName },
+            beforeContentClassName: `cursor-${userId}`,
+          }
+        };
+
+        setDecorations(prev => [...prev, newDecoration]);
+      }
+    });
+
+    // Listen for selection updates
+    onSelectionUpdate(({ userId, userName, selection }) => {
+      if (editorInstance) {
+        // Remove old selection for this user
+        setDecorations(prev => 
+          prev.filter(d => !d.userId || d.userId !== userId)
+        );
+
+        // Add new selection
+        const newDecoration = {
+          userId,
+          range: selection,
+          options: {
+            className: `selection-${userId}`,
+            hoverMessage: { value: `Selected by ${userName}` }
+          }
+        };
+
+        setDecorations(prev => [...prev, newDecoration]);
+      }
+    });
+  }, [socket, roomId, editorInstance]);
+
+  // Handle editor mount
+  const handleEditorDidMount = (editor) => {
+    setEditorInstance(editor);
+
+    // Add cursor and selection change listeners
+    editor.onDidChangeCursorPosition(e => {
+      emitCursorPosition(roomId, e.position);
+    });
+
+    editor.onDidChangeCursorSelection(e => {
+      emitSelection(roomId, e.selection);
+    });
+  };
+
+  // Handle code changes
   const handleEditorChange = (value) => {
     setCode(value);
-    // TODO: Implement collaborative editing
+    emitCodeChange(roomId, { code: value });
   };
 
   const handleRunCode = () => {
@@ -77,6 +170,7 @@ function CodeEditor() {
             theme={theme}
             value={code}
             onChange={handleEditorChange}
+            onMount={handleEditorDidMount}
             options={{
               fontSize: 14,
               minimap: { enabled: true },

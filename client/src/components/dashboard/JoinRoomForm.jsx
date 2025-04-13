@@ -21,6 +21,12 @@ const JoinRoomForm = () => {
     try {
       const response = await joinRoom(joinRoomData.name, joinRoomData.passcode);
       
+      // Store room data in localStorage
+      localStorage.setItem('currentRoom', JSON.stringify({
+        name: joinRoomData.name,
+        sessionToken: response.sessionToken
+      }));
+      
       // Navigate to room using session token
       navigate(`/room/session/${response.sessionToken}`);
     } catch (err) {
