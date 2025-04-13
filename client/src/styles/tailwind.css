@@ -1,0 +1,77 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-secondary-dark text-white;
+  }
+}
+
+@layer components {
+  .gradient-text {
+    @apply bg-gradient-to-r from-primary via-accent-pink to-accent-purple bg-clip-text text-transparent;
+  }
+
+  .star {
+    @apply absolute bg-white rounded-full;
+    animation: twinkle 1.5s infinite ease-in-out alternate;
+  }
+
+  .moon {
+    @apply absolute w-32 h-32 rounded-full bg-gradient-to-b from-gray-200 to-gray-300;
+    box-shadow: inset -20px -20px 50px rgba(0, 0, 0, 0.4);
+  }
+
+  .asteroid {
+    @apply absolute bg-primary/30 rounded-full;
+    width: 2px;
+    height: 2px;
+    box-shadow: 0 0 10px 2px theme('colors.primary.DEFAULT');
+  }
+}
+
+@keyframes twinkle {
+  from {
+    opacity: 0.2;
+  }
+  to {
+    opacity: 0.8;
+  }
+}
+
+@keyframes moveAsteroid1 {
+  from {
+    transform: translate(0, 0);
+  }
+  to {
+    transform: translate(100vw, 100vh);
+  }
+}
+
+@keyframes moveAsteroid2 {
+  from {
+    transform: translate(100vw, 0);
+  }
+  to {
+    transform: translate(0, 100vh);
+  }
+}
+
+@keyframes moveAsteroid3 {
+  from {
+    transform: translate(50vw, 0);
+  }
+  to {
+    transform: translate(-50vw, 100vh);
+  }
+}
+
+@keyframes moveAsteroid4 {
+  from {
+    transform: translate(0, 50vh);
+  }
+  to {
+    transform: translate(100vw, -50vh);
+  }
+}
