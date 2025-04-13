@@ -15,14 +15,12 @@ function DashboardPage() {
   const [activeTab, setActiveTab] = useState('join');
   
   // Check authentication status
-  const isGuest = Boolean(localStorage.getItem('guestId'));
-  const googleUser = JSON.parse(localStorage.getItem('user'));
-  const isAuthenticated = isGuest || Boolean(googleUser);
+  const user = JSON.parse(localStorage.getItem('user'));
+  const isGuest = user?.isGuest === true;
+  const isAuthenticated = Boolean(user);
   
   // Set username based on auth type
-  const username = isGuest 
-    ? `Guest_${localStorage.getItem('guestId').slice(-6)}`
-    : googleUser?.displayName || 'User';
+  const username = user?.displayName || 'User';
 
   // Authentication check
   useEffect(() => {

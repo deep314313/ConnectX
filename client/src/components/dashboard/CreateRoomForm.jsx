@@ -1,12 +1,57 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Wand2, Eye, EyeOff, Plus } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { createRoom } from '../../services/roomService';
+import axios from 'axios';
+
+const API_URL = 'http://localhost:5000/api';
 
 const CreateRoomForm = () => {
+  const navigate = useNavigate();
   const [showPasscode, setShowPasscode] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isChecking, setIsChecking] = useState(false);
+  const [error, setError] = useState('');
   const [newRoom, setNewRoom] = useState({
     name: '',
     passcode: ''
   });
+
+  // Debounced room name check
+  const checkRoomName = useCallback(async (name) => {
+    if (!name) return;
+    
+    setIsChecking(true);
+    setError('');
+    
+    try {
+      const response = await axios.get(`${API_URL}/rooms/check/${name}`);
+      if (!response.data.available) {
+        setError('Room name already taken');
+      }
+    } catch (err) {
+      console.error('Error checking room name:', err);
+    } finally {
+      setIsChecking(false);
+    }
+  }, []);
+
+  // Debounce room name check
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (newRoom.name) {
+        checkRoomName(newRoom.name);
+      }
+    }, 500); // Wait 500ms after last keystroke
+
+    return () => clearTimeout(timer);
+  }, [newRoom.name, checkRoomName]);
+
+  const handleRoomNameChange = (e) => {
+    const value = e.target.value;
+    setNewRoom({ ...newRoom, name: value });
+    setError(''); // Clear error when typing
+  };
 
   const generateRandomRoomName = () => {
     const adjectives = [
@@ -22,10 +67,9 @@ const CreateRoomForm = () => {
       'Zone', 'Space', 'Spot', 'Point', 'Lab'
     ];
     const random = (arr) => arr[Math.floor(Math.random() * arr.length)];
-    setNewRoom({
-      ...newRoom,
-      name: `${random(adjectives)}${random(nouns)}${Math.floor(Math.random() * 1000)}`
-    });
+    const newName = `${random(adjectives)}${random(nouns)}${Math.floor(Math.random() * 1000)}`;
+    setNewRoom({ ...newRoom, name: newName });
+    checkRoomName(newName);
   };
 
   const generatePasscode = () => {
@@ -35,10 +79,32 @@ const CreateRoomForm = () => {
     });
   };
 
-  const handleCreateRoom = (e) => {
+  const handleCreateRoom = async (e) => {
     e.preventDefault();
-    // TODO: Implement room creation
-    console.log('Creating room:', newRoom);
+    
+    // Don't submit if there's an error or if still checking
+    if (error || isChecking) {
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      const user = JSON.parse(localStorage.getItem('user'));
+      
+      const roomData = {
+        ...newRoom,
+        creatorId: user.uid,
+        creatorName: user.displayName
+      };
+
+      const response = await createRoom(roomData);
+      navigate(`/room/session/${response.sessionToken}`);
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to create room');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -46,6 +112,11 @@ const CreateRoomForm = () => {
       <h2 className="text-2xl font-bold mb-6 bg-gradient-to-r from-primary via-red-500 to-primary-light bg-clip-text text-transparent">
         Create New Room
       </h2>
+      {error && (
+        <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-500 text-sm">
+          {error}
+        </div>
+      )}
       <form onSubmit={handleCreateRoom} className="space-y-6">
         <div>
           <label className="block text-sm font-medium text-gray-300 mb-2">
@@ -56,11 +127,16 @@ const CreateRoomForm = () => {
               <input
                 type="text"
                 value={newRoom.name}
-                onChange={(e) => setNewRoom({ ...newRoom, name: e.target.value })}
-                className="w-full bg-black/50 border border-red-500/30 rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:border-primary"
+                onChange={handleRoomNameChange}
+                className={`w-full bg-black/50 border ${error ? 'border-red-500' : 'border-red-500/30'} rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:border-primary`}
                 placeholder="Enter room name"
                 required
               />
+              {isChecking && (
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">
+                  Checking...
+                </span>
+              )}
             </div>
             <button
               type="button"
@@ -103,10 +179,15 @@ const CreateRoomForm = () => {
         </div>
         <button
           type="submit"
-          className="w-full bg-red-600 hover:bg-red-700 text-white py-3 px-4 rounded-lg transition-all duration-200 font-medium text-lg flex items-center justify-center gap-2"
+          disabled={isLoading}
+          className="w-full bg-red-600 hover:bg-red-700 text-white py-3 px-4 rounded-lg transition-all duration-200 font-medium text-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          <Plus className="w-4 h-4" />
-          Create Room
+          {isLoading ? (
+            <span className="animate-spin">⌛</span>
+          ) : (
+            <Plus className="w-4 h-4" />
+          )}
+          {isLoading ? 'Creating...' : 'Create Room'}
         </button>
       </form>
     </div>

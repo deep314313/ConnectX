@@ -1,20 +1,33 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { handleGoogleLogin } from '../services/firebase';
+import { toast } from 'react-toastify';
 
 function LoginPage() {
   const navigate = useNavigate();
   const starsContainerRef = useRef(null);
-
-  const generateGuestId = () => {
-    const timestamp = Date.now().toString(36);
-    const randomStr = Math.random().toString(36).substring(2, 8);
-    return `guest_${timestamp}_${randomStr}`;
-  };
+  const [guestName, setGuestName] = useState('');
+  const [showGuestInput, setShowGuestInput] = useState(false);
 
   const handleGuestAccess = () => {
-    const guestId = generateGuestId();
-    localStorage.setItem('guestId', guestId);
+    if (!showGuestInput) {
+      setShowGuestInput(true);
+      return;
+    }
+
+    if (!guestName.trim()) {
+      toast.error('Please enter your name to continue as guest');
+      return;
+    }
+
+    // Create a consistent guest ID based on the name
+    const guestUser = {
+      uid: `guest_${guestName.toLowerCase().replace(/\s+/g, '_')}`,
+      displayName: guestName,
+      isGuest: true
+    };
+
+    localStorage.setItem('user', JSON.stringify(guestUser));
     navigate('/dashboard');
   };
 
@@ -22,14 +35,12 @@ function LoginPage() {
     try {
       const result = await handleGoogleLogin();
       if (result && result.user) {
-        // Remove any existing guest ID
-        localStorage.removeItem('guestId');
-        // Navigate to dashboard after successful login
+        // Remove guest data when logging in with Google
+        localStorage.removeItem('guestRoomHistory');
         navigate('/dashboard');
       }
     } catch (error) {
       console.error('Google login error:', error);
-      // You might want to show an error message to the user here
     }
   };
 
@@ -134,13 +145,32 @@ function LoginPage() {
               Continue with Google
             </button>
 
-            {/* Guest Access Button */}
-            <button
-              onClick={handleGuestAccess}
-              className="w-full border-2 border-primary hover:bg-primary/10 text-white px-4 py-3 rounded-lg font-semibold transition-all"
-            >
-              Continue as Guest
-            </button>
+            {/* Guest Access Section */}
+            {showGuestInput ? (
+              <div className="space-y-3">
+                <input
+                  type="text"
+                  value={guestName}
+                  onChange={(e) => setGuestName(e.target.value)}
+                  placeholder="Enter your name"
+                  className="w-full bg-black/50 border border-primary/30 rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:border-primary"
+                  maxLength={20}
+                />
+                <button
+                  onClick={handleGuestAccess}
+                  className="w-full border-2 border-primary hover:bg-primary/10 text-white px-4 py-3 rounded-lg font-semibold transition-all"
+                >
+                  Continue as Guest
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={handleGuestAccess}
+                className="w-full border-2 border-primary hover:bg-primary/10 text-white px-4 py-3 rounded-lg font-semibold transition-all"
+              >
+                Continue as Guest
+              </button>
+            )}
           </div>
 
           <div className="text-center">

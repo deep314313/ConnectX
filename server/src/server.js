@@ -5,6 +5,9 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const connectDB = require('./config/db');
 
+// Import routes
+const roomRoutes = require('./routes/roomRoutes');
+
 // Load environment variables
 dotenv.config();
 
@@ -39,6 +42,15 @@ io.on('connection', (socket) => {
 // Routes
 app.get('/', (req, res) => {
   res.json({ message: 'ConnectX Server is running' });
+});
+
+// API routes
+app.use('/api/rooms', roomRoutes);
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ message: 'Something went wrong!' });
 });
 
 // Start server
