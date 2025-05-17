@@ -2,8 +2,27 @@ import React, { useEffect, useRef, useState } from 'react';
 import { fabric } from 'fabric';
 import {
   Pencil, Square, Circle, Type, Grid, Eraser,
-  Triangle, RectangleHorizontal, Palette
+  Triangle, RectangleHorizontal, Palette, Undo, Redo, Trash2,
+  ArrowRight, Trash
 } from 'lucide-react';
+import { toast } from 'react-toastify';
+
+// Helper to decode JWT and extract roomId (ObjectId)
+function getActualRoomIdFromJWT(jwtToken) {
+  try {
+    if (!jwtToken || typeof jwtToken !== 'string' || !jwtToken.includes('.')) {
+      // console.log('[Whiteboard] Not a JWT token, returning as is:', jwtToken);
+      return jwtToken;
+    }
+    
+    const payload = JSON.parse(atob(jwtToken.split('.')[1]));
+    // console.log('[Whiteboard] Decoded JWT payload:', payload);
+    return payload.roomId || jwtToken;
+  } catch (err) {
+    console.error('[Whiteboard] Error decoding JWT:', err);
+    return jwtToken;
+  }
+}
 
 function Whiteboard({ socket, roomId }) {
   const canvasRef = useRef(null);
@@ -18,6 +37,11 @@ function Whiteboard({ socket, roomId }) {
   const [gridColor, setGridColor] = useState('#333333');
   const [lastBrushColor, setLastBrushColor] = useState(color);
   const [gridPattern, setGridPattern] = useState('grid');
+  const isDrawingRef = useRef(false);
+  const isRemoteChangeRef = useRef(false);
+  const canvasHistoryRef = useRef([]);
+  const canvasHistoryIndexRef = useRef(-1);
+  const socketRef = useRef(socket);
 
   const createGrid = (canvas) => {
     if (!showGrid) {
@@ -107,7 +131,60 @@ function Whiteboard({ socket, roomId }) {
     };
   };
 
+  // Save canvas state for undo/redo
+  const saveCanvasState = (canvas) => {
+    if (isRemoteChangeRef.current) return; // Don't save history for remote changes
+    
+    // Remove all states after current index if we've gone back in history
+    if (canvasHistoryIndexRef.current < canvasHistoryRef.current.length - 1) {
+      canvasHistoryRef.current = canvasHistoryRef.current.slice(0, canvasHistoryIndexRef.current + 1);
+    }
+    
+    const json = canvas.toJSON(['id']);
+    canvasHistoryRef.current.push(json);
+    canvasHistoryIndexRef.current = canvasHistoryRef.current.length - 1;
+    
+        // console.log('[Whiteboard] Saved canvas state:', {     //   historyLength: canvasHistoryRef.current.length,     //   currentIndex: canvasHistoryIndexRef.current     // });
+  };
+
+  const undo = () => {
+    const canvas = fabricRef.current;
+    if (canvasHistoryIndexRef.current > 0) {
+      canvasHistoryIndexRef.current--;
+      const json = canvasHistoryRef.current[canvasHistoryIndexRef.current];
+      isRemoteChangeRef.current = true;
+      canvas.loadFromJSON(json, () => {
+        canvas.renderAll();
+        isRemoteChangeRef.current = false;
+        // console.log('[Whiteboard] Undo - loaded state:', canvasHistoryIndexRef.current);
+      });
+    }
+  };
+
+  const redo = () => {
+    const canvas = fabricRef.current;
+    if (canvasHistoryIndexRef.current < canvasHistoryRef.current.length - 1) {
+      canvasHistoryIndexRef.current++;
+      const json = canvasHistoryRef.current[canvasHistoryIndexRef.current];
+      isRemoteChangeRef.current = true;
+      canvas.loadFromJSON(json, () => {
+        canvas.renderAll();
+        isRemoteChangeRef.current = false;
+        // console.log('[Whiteboard] Redo - loaded state:', canvasHistoryIndexRef.current);
+      });
+    }
+  };
+
+  // Setup canvas and socket connections
   useEffect(() => {
+    // console.log('[Whiteboard] Setting up canvas with socket:', !!socket, 'roomId:', roomId);
+    socketRef.current = socket;
+    
+    if (!canvasRef.current) {
+      console.error('[Whiteboard] Canvas ref not available');
+      return;
+    }
+    
     // Initialize Fabric canvas
     fabricRef.current = new fabric.Canvas(canvasRef.current, {
       isDrawingMode: true,
@@ -132,84 +209,292 @@ function Whiteboard({ socket, roomId }) {
       createGrid(canvas); // Re-create grid after resize
     };
     window.addEventListener('resize', handleResize);
-
-    // Set up socket listeners for real-time collaboration
-    if (socket) {
-      // Listen for object added by other users
-      socket.on('canvas-object-added', (data) => {
-        if (data.roomId === roomId) {
-          fabric.util.enlivenObjects([data.object], (objects) => {
-            objects.forEach(obj => {
-              canvas.add(obj);
-              canvas.renderAll();
+    
+    // Setup keyboard shortcuts for deleting objects
+    const handleKeyDown = (e) => {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+        const activeObject = canvas.getActiveObject();
+        if (activeObject) {
+          canvas.remove(activeObject);
+          canvas.renderAll();
+          
+          // Emit object removed event to server
+          if (socketRef.current?.connected && activeObject.id) {
+            const actualRoomId = getActualRoomIdFromJWT(roomId);
+            socketRef.current.emit('canvas-object-removed', {
+              roomId: actualRoomId,
+              objectId: activeObject.id
             });
-          });
-        }
-      });
-
-      // Listen for object modified by other users
-      socket.on('canvas-object-modified', (data) => {
-        if (data.roomId === roomId) {
-          const object = canvas.getObjects().find(obj => obj.id === data.objectId);
-          if (object) {
-            object.set(data.modifications);
-            canvas.renderAll();
           }
+        } else {
+          toast.info('Select an object first to delete it');
         }
-      });
-
-      // Listen for object removed by other users
-      socket.on('canvas-object-removed', (data) => {
-        if (data.roomId === roomId) {
-          const object = canvas.getObjects().find(obj => obj.id === data.objectId);
-          if (object) {
-            canvas.remove(object);
-            canvas.renderAll();
-          }
-        }
-      });
-    }
-
-    // Set up canvas event listeners
-    canvas.on('object:added', (e) => {
-      if (!e.target.id) {
-        e.target.id = Date.now().toString();
       }
-      if (socket) {
-        socket.emit('canvas-object-added', {
-          roomId,
-          object: e.target.toObject()
+    };
+    window.addEventListener('keydown', handleKeyDown);
+
+    // Save initial state
+    saveCanvasState(canvas);
+
+    // Set up canvas event listeners for detecting changes
+    canvas.on('object:added', (e) => {
+      if (isRemoteChangeRef.current) return;
+      
+      // console.log('[Whiteboard] Object added locally');
+      if (!e.target.id) {
+        e.target.id = Date.now().toString() + '-' + Math.random().toString(36).substr(2, 9);
+      }
+      
+      saveCanvasState(canvas);
+      
+      if (socketRef.current?.connected) {
+        const actualRoomId = getActualRoomIdFromJWT(roomId);
+        // console.log('[Whiteboard] Emitting object added:', e.target.id);
+        socketRef.current.emit('canvas-object-added', {
+          roomId: actualRoomId,
+          object: e.target.toObject(['id'])
         });
       }
     });
 
     canvas.on('object:modified', (e) => {
-      if (socket) {
-        socket.emit('canvas-object-modified', {
-          roomId,
+      if (isRemoteChangeRef.current) return;
+      
+      console.log('[Whiteboard] Object modified locally');
+      saveCanvasState(canvas);
+      
+      if (socketRef.current?.connected) {
+        const actualRoomId = getActualRoomIdFromJWT(roomId);
+        console.log('[Whiteboard] Emitting object modified:', e.target.id);
+        socketRef.current.emit('canvas-object-modified', {
+          roomId: actualRoomId,
           objectId: e.target.id,
-          modifications: e.target.toObject()
+          modifications: e.target.toObject(['id'])
         });
       }
     });
 
     canvas.on('object:removed', (e) => {
-      if (socket) {
-        socket.emit('canvas-object-removed', {
-          roomId,
+      if (isRemoteChangeRef.current) return;
+      
+      console.log('[Whiteboard] Object removed locally');
+      saveCanvasState(canvas);
+      
+      if (socketRef.current?.connected) {
+        const actualRoomId = getActualRoomIdFromJWT(roomId);
+        console.log('[Whiteboard] Emitting object removed:', e.target.id);
+        socketRef.current.emit('canvas-object-removed', {
+          roomId: actualRoomId,
           objectId: e.target.id
         });
       }
     });
 
+    // Track drawing state for paths
+    canvas.on('mouse:down', () => {
+      isDrawingRef.current = true;
+    });
+
+    canvas.on('mouse:up', () => {
+      isDrawingRef.current = false;
+    });
+
+    // Setup for path synchronization
+    canvas.on('path:created', (e) => {
+      if (isRemoteChangeRef.current) return;
+      
+      if (!e.path.id) {
+        e.path.id = Date.now().toString() + '-' + Math.random().toString(36).substr(2, 9);
+      }
+    });
+
     return () => {
+      // Cleanup
+      // console.log('[Whiteboard] Cleaning up canvas');
       canvas.dispose();
       window.removeEventListener('resize', handleResize);
-      if (socket) {
-        socket.off('canvas-object-added');
-        socket.off('canvas-object-modified');
-        socket.off('canvas-object-removed');
+      window.removeEventListener('keydown', handleKeyDown);
+      
+      if (socketRef.current?.connected) {
+        const actualRoomId = getActualRoomIdFromJWT(roomId);
+        socketRef.current.emit('whiteboard:leave', { roomId: actualRoomId });
       }
+    };
+  }, []);
+
+  // Setup socket listeners for real-time collaboration
+  useEffect(() => {
+    if (!socket?.connected || !roomId) {
+      // console.log('[Whiteboard] Socket not connected or no roomId');
+      return;
+    }
+    
+    socketRef.current = socket;
+    const actualRoomId = getActualRoomIdFromJWT(roomId);
+    
+    // console.log('[Whiteboard] Setting up socket listeners for room:', actualRoomId);
+    
+    // Join whiteboard room
+    socket.emit('whiteboard:join', { roomId: actualRoomId });
+    
+    // Listen for initial state from server
+    const handleInitialState = ({ objects, version }) => {
+      // console.log('[Whiteboard] Received initial whiteboard state:', { 
+      //   objectCount: objects.length, 
+      //   version 
+      // });
+      
+      if (!fabricRef.current) {
+        console.error('[Whiteboard] Canvas not initialized');
+        return;
+      }
+      
+      const canvas = fabricRef.current;
+      
+      // Only load if we have objects and our canvas is empty
+      if (objects.length > 0 && canvas.getObjects().length === 0) {
+        isRemoteChangeRef.current = true;
+        
+        fabric.util.enlivenObjects(objects, (enlivenedObjects) => {
+          enlivenedObjects.forEach(obj => {
+            canvas.add(obj);
+          });
+          
+          canvas.renderAll();
+          isRemoteChangeRef.current = false;
+          
+          // Save this state to history
+          saveCanvasState(canvas);
+        }, 'fabric');
+      }
+    };
+    
+    // Listen for object added by other users
+    const handleObjectAdded = ({ roomId: eventRoomId, object }) => {
+      if (eventRoomId !== actualRoomId) return;
+      
+      console.log('[Whiteboard] Remote object added:', object.id);
+      
+      if (!fabricRef.current) {
+        console.error('[Whiteboard] Canvas not initialized');
+        return;
+      }
+      
+      const canvas = fabricRef.current;
+      isRemoteChangeRef.current = true;
+      
+      fabric.util.enlivenObjects([object], (objects) => {
+        objects.forEach(obj => {
+          // Check if object already exists
+          const existingObj = canvas.getObjects().find(o => o.id === obj.id);
+          if (existingObj) {
+            canvas.remove(existingObj);
+          }
+          
+          canvas.add(obj);
+        });
+        
+        canvas.renderAll();
+        isRemoteChangeRef.current = false;
+        
+        // Save this state to history
+        saveCanvasState(canvas);
+      }, 'fabric');
+    };
+
+    // Listen for object modified by other users
+    const handleObjectModified = ({ roomId: eventRoomId, objectId, modifications }) => {
+      if (eventRoomId !== actualRoomId) return;
+      
+      console.log('[Whiteboard] Remote object modified:', objectId);
+      
+      if (!fabricRef.current) {
+        console.error('[Whiteboard] Canvas not initialized');
+        return;
+      }
+      
+      const canvas = fabricRef.current;
+      const object = canvas.getObjects().find(obj => obj.id === objectId);
+      
+      if (object) {
+        isRemoteChangeRef.current = true;
+        
+        // Update the object
+        object.set(modifications);
+        canvas.renderAll();
+        
+        isRemoteChangeRef.current = false;
+        
+        // Save this state to history
+        saveCanvasState(canvas);
+      }
+    };
+
+    // Listen for object removed by other users
+    const handleObjectRemoved = ({ roomId: eventRoomId, objectId }) => {
+      if (eventRoomId !== actualRoomId) return;
+      
+      console.log('[Whiteboard] Remote object removed:', objectId);
+      
+      if (!fabricRef.current) {
+        console.error('[Whiteboard] Canvas not initialized');
+        return;
+      }
+      
+      const canvas = fabricRef.current;
+      const object = canvas.getObjects().find(obj => obj.id === objectId);
+      
+      if (object) {
+        isRemoteChangeRef.current = true;
+        
+        canvas.remove(object);
+        canvas.renderAll();
+        
+        isRemoteChangeRef.current = false;
+        
+        // Save this state to history
+        saveCanvasState(canvas);
+      }
+    };
+
+    // Listen for canvas cleared by other users
+    const handleCanvasClear = ({ roomId: eventRoomId }) => {
+      if (eventRoomId !== actualRoomId) return;
+      
+      console.log('[Whiteboard] Remote canvas clear');
+      
+      if (!fabricRef.current) {
+        console.error('[Whiteboard] Canvas not initialized');
+        return;
+      }
+      
+      const canvas = fabricRef.current;
+      isRemoteChangeRef.current = true;
+      
+      canvas.clear();
+      createGrid(canvas);
+      
+      isRemoteChangeRef.current = false;
+      
+      // Save this state to history
+      saveCanvasState(canvas);
+    };
+    
+    // Register event listeners
+    socket.on('whiteboard:init', handleInitialState);
+    socket.on('canvas-object-added', handleObjectAdded);
+    socket.on('canvas-object-modified', handleObjectModified);
+    socket.on('canvas-object-removed', handleObjectRemoved);
+    socket.on('canvas-clear', handleCanvasClear);
+    
+    // Clean up listeners on unmount
+    return () => {
+      console.log('[Whiteboard] Removing socket listeners');
+      socket.off('whiteboard:init', handleInitialState);
+      socket.off('canvas-object-added', handleObjectAdded);
+      socket.off('canvas-object-modified', handleObjectModified);
+      socket.off('canvas-object-removed', handleObjectRemoved);
+      socket.off('canvas-clear', handleCanvasClear);
     };
   }, [socket, roomId]);
 
@@ -277,6 +562,32 @@ function Whiteboard({ socket, roomId }) {
           fontSize: 20
         });
         break;
+      case 'arrow':
+        // Create a line
+        const line = new fabric.Line([50, 50, 200, 50], {
+          stroke: color,
+          strokeWidth: lineWidth,
+          selectable: true
+        });
+        
+        // Create a triangle for the arrowhead
+        const arrowHead = new fabric.Triangle({
+          width: 15,
+          height: 15,
+          fill: color,
+          left: 200,
+          top: 50,
+          angle: 90,
+          originX: 'center',
+          originY: 'center'
+        });
+        
+        // Group the line and arrowhead together
+        shape = new fabric.Group([line, arrowHead], {
+          left: 100,
+          top: 100
+        });
+        break;
     }
 
     if (shape) {
@@ -293,6 +604,7 @@ function Whiteboard({ socket, roomId }) {
     if (toolId === 'pencil') {
       canvas.isDrawingMode = true;
       canvas.freeDrawingBrush.color = color;
+      canvas.freeDrawingBrush.width = lineWidth;
     } else if (toolId === 'eraser') {
       canvas.isDrawingMode = true;
       setLastBrushColor(color);
@@ -300,8 +612,61 @@ function Whiteboard({ socket, roomId }) {
       canvas.freeDrawingBrush.width = lineWidth * 2;
     } else {
       canvas.isDrawingMode = false;
-      if (['rectangle', 'square', 'circle', 'triangle', 'text'].includes(toolId)) {
+      if (['rectangle', 'square', 'circle', 'triangle', 'text', 'arrow'].includes(toolId)) {
         addShape(toolId);
+      } else if (toolId === 'delete') {
+        deleteSelectedObject();
+      }
+    }
+  };
+
+  // Function to delete the currently selected object
+  const deleteSelectedObject = () => {
+    const canvas = fabricRef.current;
+    const activeObject = canvas.getActiveObject();
+    
+    if (activeObject) {
+      // Save object ID before removing
+      const objectId = activeObject.id;
+      
+      // Remove from canvas
+      canvas.remove(activeObject);
+      canvas.renderAll();
+      
+      // Emit object removed event to server
+      if (socketRef.current?.connected && objectId) {
+        const actualRoomId = getActualRoomIdFromJWT(roomId);
+        socketRef.current.emit('canvas-object-removed', {
+          roomId: actualRoomId,
+          objectId: objectId
+        });
+      }
+      
+      // Set the tool back to pencil after deletion
+      setTool('pencil');
+      canvas.isDrawingMode = true;
+      canvas.freeDrawingBrush.color = color;
+      canvas.freeDrawingBrush.width = lineWidth;
+    } else {
+      // If no object is selected, show a message or notification
+      toast.error('No object selected to delete');
+    }
+  };
+
+  const clearCanvas = () => {
+    const canvas = fabricRef.current;
+    
+    if (canvas) {
+      // Clear all objects
+      canvas.clear();
+      
+      // Re-create grid
+      createGrid(canvas);
+      
+      // Send clear event to server
+      if (socketRef.current?.connected) {
+        const actualRoomId = getActualRoomIdFromJWT(roomId);
+        socketRef.current.emit('canvas-clear', { roomId: actualRoomId });
       }
     }
   };
@@ -313,7 +678,9 @@ function Whiteboard({ socket, roomId }) {
     { id: 'square', icon: Square, label: 'Square' },
     { id: 'circle', icon: Circle, label: 'Circle' },
     { id: 'triangle', icon: Triangle, label: 'Triangle' },
-    { id: 'text', icon: Type, label: 'Text' }
+    { id: 'arrow', icon: ArrowRight, label: 'Arrow Line' },
+    { id: 'text', icon: Type, label: 'Text' },
+    { id: 'delete', icon: Trash, label: 'Delete Selected (or press Delete key)' }
   ];
 
   return (
@@ -341,6 +708,31 @@ function Whiteboard({ socket, roomId }) {
           ))}
           <div className="w-px h-6 bg-gray-700 mx-2" />
           
+          {/* Undo/Redo/Clear */}
+          <button
+            onClick={undo}
+            className="p-2 rounded-lg text-gray-400 hover:text-primary hover:bg-primary/10"
+            title="Undo"
+          >
+            <Undo className="w-5 h-5" />
+          </button>
+          <button
+            onClick={redo}
+            className="p-2 rounded-lg text-gray-400 hover:text-primary hover:bg-primary/10"
+            title="Redo"
+          >
+            <Redo className="w-5 h-5" />
+          </button>
+          <button
+            onClick={clearCanvas}
+            className="p-2 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-500/10"
+            title="Clear Canvas"
+          >
+            <Trash2 className="w-5 h-5" />
+          </button>
+          
+          <div className="w-px h-6 bg-gray-700 mx-2" />
+          
           {/* Color picker */}
           <div className="flex items-center gap-2">
             <input
@@ -348,6 +740,9 @@ function Whiteboard({ socket, roomId }) {
               value={color}
               onChange={(e) => {
                 setColor(e.target.value);
+                if (fabricRef.current) {
+                  fabricRef.current.freeDrawingBrush.color = e.target.value;
+                }
                 if (tool === 'eraser') {
                   handleToolClick('pencil');
                 }
@@ -367,7 +762,13 @@ function Whiteboard({ socket, roomId }) {
           {/* Line width selector */}
           <select
             value={lineWidth}
-            onChange={(e) => setLineWidth(Number(e.target.value))}
+            onChange={(e) => {
+              const width = Number(e.target.value);
+              setLineWidth(width);
+              if (fabricRef.current) {
+                fabricRef.current.freeDrawingBrush.width = width;
+              }
+            }}
             className="bg-black bg-opacity-50 border border-primary/20 rounded-lg px-2 py-1 text-white text-sm"
             title="Line Width"
           >

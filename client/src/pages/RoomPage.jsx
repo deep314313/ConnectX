@@ -36,7 +36,8 @@ import {
   onMemberLeave,
   onMembersList,
   disconnectSocket,
-  onRoomError
+  onRoomError,
+  onChatMessage
 } from '../services/socket';
 
 function RoomPage() {
@@ -44,7 +45,7 @@ function RoomPage() {
   const navigate = useNavigate();
   const starsContainerRef = useRef(null);
   const [activeFeature, setActiveFeature] = useState('members');
-  const [showChat, setShowChat] = useState(true);
+  const [showChat, setShowChat] = useState(false);
   const [showAI, setShowAI] = useState(false);
   const [members, setMembers] = useState([]);
   const [socket, setSocket] = useState(null);
@@ -52,6 +53,8 @@ function RoomPage() {
   const [error, setError] = useState(null);
   const [messages, setMessages] = useState([]);
   const [roomName, setRoomName] = useState('');
+  const [currentCode, setCurrentCode] = useState('');
+  const [currentLanguage, setCurrentLanguage] = useState('javascript');
   const socketRef = useRef(null);
   const userRef = useRef(null);
 
@@ -237,6 +240,59 @@ function RoomPage() {
     };
   }, [sessionToken, navigate]);
 
+  // Update this effect to handle chat messages more efficiently
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleChatMessage = (data) => {
+      console.log('New chat message received:', data);
+      if (data && data.message) {
+        const isMine = data.message.userId === userRef.current?.uid;
+        
+        // Update message if it's a temporary one being confirmed, otherwise add new
+        setMessages(prevMessages => {
+          // Check if we're receiving a confirmation for a message we just sent
+          const tempIndex = prevMessages.findIndex(m => 
+            m.isSending && m.text === data.message.text && m.userId === data.message.userId
+          );
+          
+          if (tempIndex >= 0) {
+            // Replace the temp message with the confirmed one
+            const updatedMessages = [...prevMessages];
+            updatedMessages[tempIndex] = {
+              id: data.message.id,
+              userId: data.message.userId,
+              user: data.message.user || 'Unknown',
+              text: data.message.text || '',
+              timestamp: data.message.timestamp,
+              isMe: isMine
+            };
+            return updatedMessages;
+          } else {
+            // It's a new message from someone else
+            return [
+              ...prevMessages, 
+              {
+                id: data.message.id,
+                userId: data.message.userId,
+                user: data.message.user || 'Unknown',
+                text: data.message.text || '',
+                timestamp: data.message.timestamp,
+                isMe: isMine
+              }
+            ];
+          }
+        });
+      }
+    };
+
+    onChatMessage(handleChatMessage);
+
+    return () => {
+      // Cleanup is handled in the socket service
+    };
+  }, [socket]);
+
   // Handle leaving room and cleanup
   const handleLeaveRoom = () => {
     // Clear room data when actually leaving
@@ -264,6 +320,18 @@ function RoomPage() {
     });
   };
 
+  // Handler for code updates from CodeEditor
+  const handleCodeUpdate = (code, language) => {
+    setCurrentCode(code);
+    setCurrentLanguage(language);
+  };
+
+  // Handle opening the AI assistant
+  const handleOpenAI = () => {
+    // Toggle AI assistant visibility
+    setShowAI(prev => !prev);
+  };
+
   const FeatureTab = ({ id, icon: Icon, label }) => (
     <button
       onClick={() => setActiveFeature(id)}
@@ -283,11 +351,15 @@ function RoomPage() {
       case 'members':
         return <MembersList participants={members} currentUser={userRef.current} />;
       case 'code':
-        return <CodeEditor roomId={sessionToken} socket={socket} />;
+        return <CodeEditor 
+                 roomId={sessionToken} 
+                 socket={socket} 
+                 onCodeUpdate={handleCodeUpdate}
+               />;
       case 'whiteboard':
         return <Whiteboard roomId={sessionToken} socket={socket} />;
       case 'meet':
-        return <VideoMeet participants={members} currentUser={userRef.current} socket={socket} />;
+        return <VideoMeet socket={socket} roomId={sessionToken} user={userRef.current} />;
       case 'files':
         return <FileUpload roomId={sessionToken} socket={socket} currentUser={userRef.current} />;
       default:
@@ -422,8 +494,9 @@ function RoomPage() {
 
         {/* AI Assistant Button */}
         <button 
-          onClick={() => setShowAI(!showAI)}
+          onClick={handleOpenAI}
           className="fixed bottom-6 right-6 w-12 h-12 bg-primary text-black rounded-full flex items-center justify-center hover:bg-primary-light transition-colors shadow-lg z-50"
+          title="AI Coding Assistant"
         >
           <Bot size={24} />
         </button>
@@ -437,6 +510,8 @@ function RoomPage() {
               roomId={sessionToken}
               socket={socket}
               currentUser={userRef.current}
+              code={currentCode}
+              language={currentLanguage}
             />
           </div>
         )}

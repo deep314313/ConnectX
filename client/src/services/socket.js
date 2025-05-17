@@ -5,26 +5,31 @@ let connectionAttempts = 0;
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 1000;
 
+// Fixed server port
+const SERVER_PORT = 5000;
+
 export const initializeSocket = (sessionToken) => {
   return new Promise((resolve, reject) => {
     try {
       if (socket?.connected) {
-        console.log('Socket already connected, reusing existing connection');
+        // console.log('[Socket] Already connected, reusing connection');
         resolve(socket);
         return;
       }
 
       if (socket) {
-        console.log('Cleaning up existing socket before new connection');
+        // console.log('[Socket] Cleaning up existing socket');
         socket.removeAllListeners();
         socket.close();
         socket = null;
       }
 
-      console.log('Creating new socket connection...');
-      socket = io('http://localhost:5000', {
+      // console.log(`[Socket] Connecting to server on port ${SERVER_PORT}`);
+      // console.log('[Socket] Creating new connection with token:', sessionToken);
+      
+      socket = io(`http://localhost:${SERVER_PORT}`, {
         auth: { token: sessionToken },
-        transports: ['polling', 'websocket'], // Start with polling, then upgrade to websocket
+        transports: ['websocket', 'polling'],
         reconnection: true,
         reconnectionAttempts: MAX_RETRIES,
         reconnectionDelay: RETRY_DELAY,
@@ -33,16 +38,22 @@ export const initializeSocket = (sessionToken) => {
       });
 
       socket.on('connect', () => {
-        console.log('Connected to room server with socket ID:', socket.id);
+        // console.log('[Socket] Connected successfully with ID:', socket.id);
+        // console.log('[Socket] Socket state:', {
+        //   connected: socket.connected,
+        //   id: socket.id,
+        //   rooms: Array.from(socket.rooms || [])
+        // });
+        
         connectionAttempts = 0;
         resolve(socket);
       });
 
       socket.on('connect_error', (error) => {
-        console.error('Socket connection error:', error);
+        console.error('[Socket] Connection error:', error);
         connectionAttempts++;
         if (connectionAttempts >= MAX_RETRIES) {
-          console.error('Max connection attempts reached');
+          console.error('[Socket] Max connection attempts reached');
           reject(new Error('Failed to connect after maximum retries'));
           socket.close();
           socket = null;
@@ -50,25 +61,23 @@ export const initializeSocket = (sessionToken) => {
       });
 
       socket.on('disconnect', (reason) => {
-        console.log('Socket disconnected:', reason);
+        // console.log('[Socket] Disconnected:', reason);
         if (reason === 'io server disconnect') {
-          // Server initiated disconnect, try to reconnect
           socket.connect();
         }
       });
 
       socket.on('error', (error) => {
-        console.error('Socket error:', error);
-        reject(error);
+        console.error('[Socket] Error:', error);
       });
 
       // Debug event listeners
-      socket.onAny((event, ...args) => {
-        console.log('Socket event received:', event, args);
-      });
+      // socket.onAny((event, ...args) => {
+      //   console.log('[Socket] Event received:', event, args);
+      // });
 
     } catch (err) {
-      console.error('Socket initialization error:', err);
+      console.error('[Socket] Initialization error:', err);
       reject(err);
     }
   });
@@ -77,7 +86,7 @@ export const initializeSocket = (sessionToken) => {
 // Room member events
 export const joinRoomSocket = (roomId, user) => {
   if (!socket?.connected) {
-    console.error('Socket not initialized or not connected');
+    console.error('[Socket] Cannot join room - socket not connected');
     return false;
   }
   
@@ -87,14 +96,23 @@ export const joinRoomSocket = (roomId, user) => {
     isGuest: user.isGuest
   };
 
-  console.log('Emitting room:join', { roomId, user: userData });
-  socket.emit('room:join', { roomId, user: userData });
+  // console.log('[Socket] Joining room:', { roomId, user: userData });
+  // console.log('[Socket] Current socket state:', {
+  //   connected: socket.connected,
+  //   id: socket.id,
+  //   rooms: Array.from(socket.rooms || [])
+  // });
+
+  socket.emit('room:join', { roomId, user: userData }, (response) => {
+    // console.log('[Socket] Room join response:', response);
+  });
+
   return true;
 };
 
 export const leaveRoomSocket = (roomId, user) => {
   if (!socket?.connected) {
-    console.error('Socket not initialized or not connected');
+    console.error('[Socket] Cannot leave room - socket not connected');
     return false;
   }
 
@@ -104,19 +122,19 @@ export const leaveRoomSocket = (roomId, user) => {
     isGuest: user.isGuest
   };
 
-  console.log('Emitting room:leave', { roomId, user: userData });
+  // console.log('[Socket] Emitting room:leave', { roomId, user: userData });
   socket.emit('room:leave', { roomId, user: userData });
   return true;
 };
 
 export const onMemberJoin = (callback) => {
   if (!socket) {
-    console.error('Socket not initialized');
+    console.error('[Socket] Cannot listen for member join - socket not initialized');
     return;
   }
 
   socket.off('member:join').on('member:join', (memberData) => {
-    console.log('Received member:join event:', memberData);
+    // console.log('[Socket] Received member:join event:', memberData);
     if (memberData) {
       callback({
         member: {
@@ -133,12 +151,12 @@ export const onMemberJoin = (callback) => {
 
 export const onMemberLeave = (callback) => {
   if (!socket) {
-    console.error('Socket not initialized');
+    console.error('[Socket] Cannot listen for member leave - socket not initialized');
     return;
   }
 
   socket.off('member:leave').on('member:leave', (data) => {
-    console.log('Received member:leave event:', data);
+    // console.log('[Socket] Received member:leave event:', data);
     if (data) {
       callback({
         memberId: data.userId || data.id
@@ -149,12 +167,12 @@ export const onMemberLeave = (callback) => {
 
 export const onMembersList = (callback) => {
   if (!socket) {
-    console.error('Socket not initialized');
+    console.error('[Socket] Cannot listen for members list - socket not initialized');
     return;
   }
 
   socket.off('members:list').on('members:list', (membersList) => {
-    console.log('Received members:list event:', membersList);
+    // console.log('[Socket] Received members:list event:', membersList);
     if (Array.isArray(membersList)) {
       callback({
         members: membersList.map(member => ({
@@ -171,114 +189,253 @@ export const onMembersList = (callback) => {
 
 // Code editor events
 export const requestCodeState = (roomId) => {
-  if (!socket) return;
+  if (!socket?.connected) {
+    console.error('[Socket] Cannot request code state - socket not connected');
+    return false;
+  }
+  // console.log('[Socket] Requesting code state for room:', roomId);
   socket.emit('code:request', { roomId });
+  return true;
 };
 
 export const onInitialCode = (callback) => {
-  if (!socket) return;
+  if (!socket?.connected) {
+    console.error('[Socket] Cannot listen for initial code - socket not connected');
+    return false;
+  }
+  // console.log('[Socket] Setting up initial code listener');
   socket.off('code:initial');
-  socket.on('code:initial', callback);
+  socket.on('code:initial', (data) => {
+    // console.log('[Socket] Received initial code event:', data);
+    callback(data);
+  });
+  return true;
 };
 
-export const emitCodeChange = (roomId, change) => {
-  if (!socket) return;
-  socket.emit('code:change', { roomId, change });
+export const emitCodeChange = (roomId, code) => {
+  if (!socket?.connected) {
+    console.error('[Socket] Cannot emit code change - socket not connected');
+    return false;
+  }
+  
+  // console.log('[Socket] Emitting code change:', { 
+  //   roomId, 
+  //   codeLength: code?.length || 0,
+  //   socketId: socket.id,
+  //   socketConnected: socket.connected,
+  //   socketRooms: Array.from(socket.rooms || [])
+  // });
+  
+  // Add a timestamp to help identify latest changes
+  const payload = { roomId, code, timestamp: Date.now() };
+  
+  try {
+    socket.emit('code:change', payload, (error, response) => {
+      if (error) {
+        console.error('[Socket] Error emitting code change:', error);
+      } else {
+        // console.log('[Socket] Code change emitted successfully:', response);
+      }
+    });
+    return true;
+  } catch (err) {
+    console.error('[Socket] Exception emitting code change:', err);
+    return false;
+  }
 };
 
 export const onCodeChange = (callback) => {
-  if (!socket) return;
+  if (!socket?.connected) {
+    console.error('[Socket] Cannot listen for code changes - socket not connected');
+    return false;
+  }
+  
+  // console.log('[Socket] Setting up code change listener with socket ID:', socket.id);
+  
+  // Remove any existing listeners to prevent duplicates
   socket.off('code:change');
-  socket.on('code:change', callback);
+  
+  socket.on('code:change', (data) => {
+    // console.log('[Socket] Received code change event:', {
+    //   dataLength: data?.code?.length || 0,
+    //   socketId: socket.id,
+    //   socketConnected: socket.connected,
+    //   socketRooms: Array.from(socket.rooms || [])
+    // });
+    
+    if (!data || typeof data.code !== 'string') {
+      console.error('[Socket] Invalid code change data received:', data);
+      return;
+    }
+    
+    callback(data);
+  });
+  
+  return true;
 };
 
 export const emitCursorPosition = (roomId, cursor) => {
-  if (!socket) return;
-  socket.emit('code:cursor', { roomId, cursor });
+  if (!socket?.connected) {
+    console.error('[Socket] Cannot emit cursor position - socket not connected');
+    return false;
+  }
+  
+  try {
+    socket.emit('code:cursor', { roomId, cursor });
+    return true;
+  } catch (err) {
+    console.error('[Socket] Exception emitting cursor position:', err);
+    return false;
+  }
 };
 
 export const onCursorUpdate = (callback) => {
-  if (!socket) return;
+  if (!socket?.connected) {
+    console.error('[Socket] Cannot listen for cursor updates - socket not connected');
+    return false;
+  }
+  
   socket.off('code:cursor');
   socket.on('code:cursor', callback);
+  return true;
 };
 
 export const emitSelection = (roomId, selection) => {
-  if (!socket) return;
-  socket.emit('code:selection', { roomId, selection });
+  if (!socket?.connected) {
+    console.error('[Socket] Cannot emit selection - socket not connected');
+    return false;
+  }
+  
+  try {
+    socket.emit('code:selection', { roomId, selection });
+    return true;
+  } catch (err) {
+    console.error('[Socket] Exception emitting selection:', err);
+    return false;
+  }
 };
 
 export const onSelectionUpdate = (callback) => {
-  if (!socket) return;
+  if (!socket?.connected) {
+    console.error('[Socket] Cannot listen for selection updates - socket not connected');
+    return false;
+  }
+  
   socket.off('code:selection');
   socket.on('code:selection', callback);
+  return true;
 };
 
 // Room creation and persistence events
 export const createRoomSocket = (roomData) => {
   if (!socket?.connected) {
-    console.error('Socket not initialized or not connected');
-    return;
+    console.error('[Socket] Cannot create room - socket not connected');
+    return false;
   }
-  console.log('Emitting room:create event with data:', roomData);
-  socket.emit('room:create', { roomData });
+  // console.log('[Socket] Emitting room:create event with data:', roomData);
+  try {
+    socket.emit('room:create', { roomData });
+    return true;
+  } catch (err) {
+    console.error('[Socket] Exception creating room:', err);
+    return false;
+  }
 };
 
 export const onRoomCreated = (callback) => {
   if (!socket) {
-    console.error('Socket not initialized');
-    return;
+    console.error('[Socket] Cannot listen for room created - socket not initialized');
+    return false;
   }
   socket.off('room:created');
   socket.on('room:created', (room) => {
-    console.log('Room created successfully:', room);
+    // console.log('[Socket] Room created successfully:', room);
     callback(room);
   });
+  return true;
 };
 
 export const onRoomError = (callback) => {
   if (!socket) {
-    console.error('Socket not initialized');
-    return;
+    console.error('[Socket] Cannot listen for room error - socket not initialized');
+    return false;
   }
   socket.off('room:error');
   socket.on('room:error', (error) => {
-    console.error('Room creation error:', error);
+    console.error('[Socket] Room error received:', error);
     callback(error);
   });
+  return true;
 };
 
 export const requestRoomInfo = (roomId) => {
   if (!socket?.connected) {
-    console.error('Socket not initialized or not connected');
+    console.error('[Socket] Cannot request room info - socket not connected');
     return false;
   }
   
-  console.log('Requesting room info for:', roomId);
-  socket.emit('room:info:request', { roomId });
-  return true;
+  // console.log('[Socket] Requesting room info for:', roomId);
+  try {
+    socket.emit('room:info:request', { roomId });
+    return true;
+  } catch (err) {
+    console.error('[Socket] Exception requesting room info:', err);
+    return false;
+  }
 };
 
 export const onRoomInfo = (callback) => {
   if (!socket) {
-    console.error('Socket not initialized');
-    return;
+    console.error('[Socket] Cannot listen for room info - socket not initialized');
+    return false;
   }
 
   socket.off('room:info').on('room:info', (data) => {
-    console.log('Received room:info event:', data);
+    // console.log('[Socket] Received room:info event:', data);
     if (data) {
       callback(data);
     }
+  });
+  return true;
+};
+
+// Chat events
+export const sendChatMessage = (roomId, message) => {
+  if (!socket?.connected) {
+    console.error('[Socket] Cannot send chat message - socket not connected');
+    return false;
+  }
+  
+  // console.log('[Socket] Sending chat message:', { roomId, message });
+  socket.emit('chat:send', { roomId, message });
+  return true;
+};
+
+export const onChatMessage = (callback) => {
+  if (!socket) {
+    console.error('[Socket] Cannot listen for chat messages - socket not initialized');
+    return;
+  }
+
+  socket.off('chat:message').on('chat:message', (data) => {
+    // console.log('[Socket] Received chat:message event:', data);
+    callback(data);
   });
 };
 
 // Cleanup
 export const disconnectSocket = () => {
   if (socket) {
-    console.log('Disconnecting socket...');
-    socket.removeAllListeners();
-    socket.disconnect();
-    socket = null;
+    // console.log('[Socket] Disconnecting...');
+    try {
+      socket.removeAllListeners();
+      socket.disconnect();
+    } catch (err) {
+      console.error('[Socket] Error during disconnect:', err);
+    } finally {
+      socket = null;
+    }
+    return true;
   }
+  return false;
 };
