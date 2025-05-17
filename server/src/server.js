@@ -42,7 +42,7 @@ const server = http.createServer(app);
 
 // CORS configuration
 app.use(cors({
-  origin: ['http://localhost:3000', 'https://connectx-client.vercel.app', 'https://connectx-client.netlify.app'],
+  origin: ['http://localhost:3000', 'https://connectx-olive.vercel.app', 'https://connectx-client.netlify.app'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   credentials: true
 }));
