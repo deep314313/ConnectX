@@ -1,7 +1,7 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import { Wand2, Eye, EyeOff, Plus } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { createRoomSocket, onRoomCreated, onRoomError, initializeSocket } from '../../services/socket';
+import { createRoom } from '../../services/roomService';
 
 const CreateRoomForm = () => {
   const [roomName, setRoomName] = useState('');
@@ -11,78 +11,43 @@ const CreateRoomForm = () => {
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
 
-  const setupSocketListeners = useCallback((socket) => {
-    return new Promise((resolve) => {
-      // Remove any existing listeners first
-      onRoomCreated(() => {});
-      onRoomError(() => {});
-
-      // Set up new listeners
-      onRoomCreated((room) => {
-        console.log('Room created successfully:', room);
-        setIsLoading(false);
-        if (room && room.id) {
-          navigate(`/room/${room.id}`);
-        } else {
-          setError('Invalid room data received');
-        }
-      });
-
-      onRoomError((error) => {
-        console.error('Room creation error:', error);
-        setIsLoading(false);
-        setError(error.message || 'Failed to create room');
-      });
-
-      // Give a small delay to ensure listeners are set up
-      setTimeout(resolve, 100);
-    });
-  }, [navigate]);
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setIsLoading(true);
-
+    
     try {
       // Get user from localStorage
       const user = JSON.parse(localStorage.getItem('user'));
       if (!user) {
         throw new Error('User not found. Please log in again.');
       }
-
-      // Use user's ID as a temporary token for socket connection
-      const tempToken = user.uid || user.id;
-      if (!tempToken) {
-        throw new Error('Invalid user data. Please log in again.');
-      }
-
-      // Initialize socket connection with user ID
-      const socket = await initializeSocket(tempToken);
       
-      // Wait for socket to be fully connected
-      if (!socket.connected) {
-        throw new Error('Failed to connect to server');
-      }
-
-      // Set up event listeners and wait for them to be ready
-      await setupSocketListeners(socket);
-
-      // Create room data
-      const roomData = {
+      // Create room data for HTTP API
+      const apiRoomData = {
         name: roomName,
         passcode,
         creatorId: user.uid || user.id,
         creatorName: user.displayName || user.name || 'Anonymous'
       };
-
-      console.log('Emitting room creation event with data:', roomData);
       
-      // Emit create room event
-      createRoomSocket(roomData);
-    } catch (err) {
-      console.error('Room creation error:', err);
-      setError(err.message || 'Failed to connect to server');
+      console.log('Creating room via HTTP API:', apiRoomData);
+      
+      // Call the HTTP API
+      const response = await createRoom(apiRoomData);
+      console.log('Room created via HTTP API:', response);
+      
+      if (response && response.sessionToken) {
+        navigate(`/room/session/${response.sessionToken}`);
+      } else if (response && response.room && response.room.id) {
+        navigate(`/room/${response.room.id}`);
+      } else {
+        setError('Room created but navigation failed');
+      }
+    } catch (apiError) {
+      console.error('HTTP API creation failed:', apiError);
+      setError(apiError.message || 'Failed to create room');
+    } finally {
       setIsLoading(false);
     }
   };

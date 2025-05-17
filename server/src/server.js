@@ -40,15 +40,21 @@ const setupUploadsDirectory = () => {
 const app = express();
 const server = http.createServer(app);
 
-// Middleware
-app.use(cors());
+// CORS configuration
+app.use(cors({
+  origin: ['http://localhost:3000', 'https://connectx-client.vercel.app', 'https://connectx-client.netlify.app'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  credentials: true
+}));
+
 app.use(express.json());
 
 // Initialize Socket.io
 const io = new Server(server, {
   cors: {
-    origin: process.env.CLIENT_URL || 'http://localhost:3000',
-    methods: ['GET', 'POST']
+    origin: ['http://localhost:3000', 'https://connectx-client.vercel.app', 'https://connectx-client.netlify.app'],
+    methods: ['GET', 'POST'],
+    credentials: true
   }
 });
 
@@ -74,6 +80,11 @@ const startServer = async () => {
     // API routes
     app.use('/api/rooms', roomRoutes);
     app.use('/api/files', fileRoutes);
+
+    // Simple OPTIONS response for preflight requests
+    app.options('*', (req, res) => {
+      res.status(200).end();
+    });
 
     // Uploads directory for static file access
     app.use('/uploads', express.static(path.join(__dirname, '../uploads')));

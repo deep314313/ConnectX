@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Files, Upload, Download, Trash2, AlertCircle, X, Clock, FileText, FileImage, File as FileIcon } from 'lucide-react';
 import axios from 'axios';
 import { toast } from 'react-toastify';
+import { API_URL, BASE_URL } from '../../services/api';
 
 function FileUpload({ roomId, currentUser }) {
   const [files, setFiles] = useState([]);
@@ -10,10 +11,6 @@ function FileUpload({ roomId, currentUser }) {
   const [uploadProgress, setUploadProgress] = useState(0);
   const fileInputRef = useRef(null);
   
-  // Make sure we're using the /api prefix in the URL
-  const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
-  // console.log('API URL:', API_URL);
-
   // Extract room ID from JWT token
   const extractRoomIdFromToken = () => {
     try {
@@ -39,11 +36,11 @@ function FileUpload({ roomId, currentUser }) {
       try {
         // Test the root API endpoint
         // console.log('Testing server connection...');
-        const rootResponse = await axios.get('http://localhost:5000');
+        const rootResponse = await axios.get(BASE_URL);
         // console.log('Server root response:', rootResponse.data);
         
         // Test the files endpoint
-        const filesApiTest = await axios.get('http://localhost:5000/api/files/test');
+        const filesApiTest = await axios.get(`${API_URL}/files/test`);
         // console.log('Files API test response:', filesApiTest.data);
       } catch (error) {
         console.error('Server connection test error:', error.message);
@@ -55,7 +52,7 @@ function FileUpload({ roomId, currentUser }) {
     };
     
     testServerConnection();
-  }, []);
+  }, [API_URL, BASE_URL]);
 
   // Fetch files on component mount
   useEffect(() => {
@@ -68,11 +65,11 @@ function FileUpload({ roomId, currentUser }) {
   const fetchFiles = async () => {
     try {
       setLoading(true);
-      // Use a hardcoded URL to ensure the correct format
-      const hardcodedUrl = `http://localhost:5000/api/files/${actualRoomId}`;
-      // console.log(`Fetching files using direct URL: ${hardcodedUrl}`);
+      // Use the API_URL from environment variable
+      const filesUrl = `${API_URL}/files/${actualRoomId}`;
+      // console.log(`Fetching files using URL: ${filesUrl}`);
       
-      const response = await axios.get(hardcodedUrl);
+      const response = await axios.get(filesUrl);
       // console.log('Files response:', response.data);
       setFiles(response.data.files || []);
     } catch (error) {
@@ -113,12 +110,12 @@ function FileUpload({ roomId, currentUser }) {
         try {
           // console.log(`Uploading ${file.name} to room ${actualRoomId}...`);
           
-          // IMPORTANT: Force using the hardcoded correct URL format with /api prefix
-          const hardcodedUrl = `http://localhost:5000/api/files/${actualRoomId}/upload`;
-          // console.log('Using direct URL:', hardcodedUrl);
+          // Use environment variable for URL
+          const uploadUrl = `${API_URL}/files/${actualRoomId}/upload`;
+          // console.log('Using URL:', uploadUrl);
           
-          // Use the actual MongoDB ID with forced URL
-          await axios.post(hardcodedUrl, formData, {
+          // Use the actual MongoDB ID with the correct URL
+          await axios.post(uploadUrl, formData, {
             headers: {
               'Content-Type': 'multipart/form-data',
             },
@@ -144,9 +141,9 @@ function FileUpload({ roomId, currentUser }) {
 
       // Refresh file list with the correct URL
       try {
-        const hardcodedListUrl = `http://localhost:5000/api/files/${actualRoomId}`;
-        // console.log('Using direct list URL:', hardcodedListUrl);
-        const response = await axios.get(hardcodedListUrl);
+        const filesUrl = `${API_URL}/files/${actualRoomId}`;
+        // console.log('Using files list URL:', filesUrl);
+        const response = await axios.get(filesUrl);
         setFiles(response.data.files || []);
       } catch (fetchError) {
         // console.error('Error fetching updated file list:', fetchError);
@@ -194,8 +191,8 @@ function FileUpload({ roomId, currentUser }) {
         // Create an anchor element for direct download
         const link = document.createElement('a');
         
-        // Use server endpoint for downloads
-        link.href = `http://localhost:5000/api/files/${actualRoomId}/download/${file.id}`;
+        // Use server endpoint for downloads with the correct API URL
+        link.href = `${API_URL}/files/${actualRoomId}/download/${file.id}`;
         link.download = file.originalName; // Force download with original filename
         document.body.appendChild(link);
         link.click();
@@ -217,7 +214,7 @@ function FileUpload({ roomId, currentUser }) {
       
       // For non-PDFs, continue using the open in new tab approach
       const downloadUrl = file.url.includes('cloudinary') ? file.url : 
-        `http://localhost:5000/api/files/${actualRoomId}/download/${file.id}`;
+        `${API_URL}/files/${actualRoomId}/download/${file.id}`;
       
       // console.log('Using download URL:', downloadUrl);
       
@@ -251,7 +248,7 @@ function FileUpload({ roomId, currentUser }) {
 
     if (window.confirm(`Are you sure you want to delete ${file.originalName}?`)) {
       try {
-        const hardcodedDeleteUrl = `http://localhost:5000/api/files/${actualRoomId}/${file.id}`;
+        const hardcodedDeleteUrl = `${API_URL}/files/${actualRoomId}/${file.id}`;
         // console.log('Using direct delete URL:', hardcodedDeleteUrl);
         
         await axios.delete(hardcodedDeleteUrl, {

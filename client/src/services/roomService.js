@@ -1,7 +1,5 @@
 import axios from 'axios';
-
-// Base URL for API calls
-const API_URL = 'http://localhost:5000/api';
+import { API_URL } from './api';
 
 // Create a new room
 export const createRoom = async (roomData) => {

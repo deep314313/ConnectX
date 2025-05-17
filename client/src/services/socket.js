@@ -1,12 +1,10 @@
 import { io } from 'socket.io-client';
+import { BASE_URL } from './api';
 
 let socket = null;
 let connectionAttempts = 0;
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 1000;
-
-// Fixed server port
-const SERVER_PORT = 5000;
 
 export const initializeSocket = (sessionToken) => {
   return new Promise((resolve, reject) => {
@@ -24,10 +22,10 @@ export const initializeSocket = (sessionToken) => {
         socket = null;
       }
 
-      // console.log(`[Socket] Connecting to server on port ${SERVER_PORT}`);
+      // console.log(`[Socket] Connecting to server: ${BASE_URL}`);
       // console.log('[Socket] Creating new connection with token:', sessionToken);
       
-      socket = io(`http://localhost:${SERVER_PORT}`, {
+      socket = io(BASE_URL, {
         auth: { token: sessionToken },
         transports: ['websocket', 'polling'],
         reconnection: true,
@@ -332,9 +330,37 @@ export const createRoomSocket = (roomData) => {
     console.error('[Socket] Cannot create room - socket not connected');
     return false;
   }
-  // console.log('[Socket] Emitting room:create event with data:', roomData);
+  
+  // Simplify the data structure completely
+  const formattedData = {
+    name: roomData.name,
+    passcode: roomData.passcode,
+    creatorId: roomData.creatorId || roomData.creator?.uid,
+    creatorName: roomData.creatorName || roomData.creator?.displayName,
+    language: roomData.language || 'javascript',
+    mode: roomData.mode || 'collaborative',
+    isPrivate: roomData.isPrivate || false,
+    code: roomData.code || `// Welcome to ConnectX Code Editor
+// Start coding here...
+
+function greet() {
+  console.log("Hello, world!");
+}
+
+greet();`
+  };
+  
+  console.log('[Socket] Sending simplified room data:', formattedData);
+  
   try {
-    socket.emit('room:create', { roomData });
+    // Wrap formattedData in a roomData object as server expects { roomData: {...} }
+    socket.emit('room:create', { roomData: formattedData }, (response) => {
+      if (response && response.error) {
+        console.error('[Socket] Room creation error response:', response.error);
+      } else if (response && response.success) {
+        console.log('[Socket] Room creation success response:', response);
+      }
+    });
     return true;
   } catch (err) {
     console.error('[Socket] Exception creating room:', err);

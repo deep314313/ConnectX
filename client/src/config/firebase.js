@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
+import { getAuth, connectAuthEmulator, browserPopupRedirectResolver } from 'firebase/auth';
 // import { getAnalytics } from 'firebase/analytics';
 
 // Try to use environment variables, fall back to window.config if available
@@ -32,7 +32,16 @@ const firebaseConfig = getFirebaseConfig();
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
+
+// Configure auth with custom settings to handle COOP issues
 const auth = getAuth(app);
+
+// Configure auth with popup settings
+auth.settings = {
+  // This helps with Cross-Origin-Opener-Policy issues
+  appVerificationDisabledForTesting: process.env.NODE_ENV !== 'production'
+};
+
 // const analytics = getAnalytics(app);
 
 export { app, auth }; // Remove analytics from export 

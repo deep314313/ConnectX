@@ -5,8 +5,7 @@ import axios from 'axios';
 import { joinRoom } from '../../services/roomService';
 import { toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
-
-const API_URL = 'http://localhost:5000/api';
+import { API_URL } from '../../services/api';
 
 // Custom toast styles (same as CreatedRooms for consistency)
 const toastStyles = {
