@@ -432,7 +432,7 @@ export const sendChatMessage = (roomId, message) => {
     return false;
   }
   
-  // console.log('[Socket] Sending chat message:', { roomId, message });
+  console.log('[Socket] Sending chat message:', { roomId, message });
   socket.emit('chat:send', { roomId, message });
   return true;
 };
@@ -444,8 +444,10 @@ export const onChatMessage = (callback) => {
   }
 
   socket.off('chat:message').on('chat:message', (data) => {
-    // console.log('[Socket] Received chat:message event:', data);
-    callback(data);
+    console.log('[Socket] Received chat message:', data);
+    if (data && data.message) {
+      callback(data);
+    }
   });
 };
 

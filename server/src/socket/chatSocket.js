@@ -1,6 +1,9 @@
 const ChatMessage = require('../models/ChatMessage');
 const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
+const redisClient = require('../utils/redisClient');
+
+console.log('ChatSocket module loaded!'); // New log
 
 // Cache for recent messages to reduce database load
 const roomMessagesCache = new Map();
@@ -25,30 +28,75 @@ const extractRoomId = (roomId) => {
   }
 };
 
+// Helper function to get messages from Redis
+async function getMessagesFromRedis(roomId) {
+  console.log('\n=== REDIS GET MESSAGES ===');
+  console.log(`Attempting to get messages from Redis for room: ${roomId}`);
+  try {
+    const cachedMessages = await redisClient.lRange(`room:${roomId}:messages`, 0, -1);
+    console.log(`✅ Found ${cachedMessages.length} messages in Redis cache`);
+    return cachedMessages.map(msg => JSON.parse(msg));
+  } catch (error) {
+    console.error('❌ Redis get messages error:', error);
+    return [];
+  }
+}
+
+// Helper function to save message to Redis
+async function saveMessageToRedis(roomId, messageData) {
+  console.log('\n=== REDIS SAVE MESSAGE ===');
+  console.log(`Attempting to save message to Redis for room: ${roomId}`);
+  try {
+    await redisClient.lPush(`room:${roomId}:messages`, JSON.stringify(messageData));
+    const currentSize = await redisClient.lLen(`room:${roomId}:messages`);
+    console.log(`✅ Message saved to Redis. Current cache size: ${currentSize}`);
+    
+    // Trim if needed
+    if (currentSize > MAX_CACHE_SIZE) {
+      await redisClient.lTrim(`room:${roomId}:messages`, 0, MAX_CACHE_SIZE - 1);
+      console.log(`✂️ Cache trimmed to ${MAX_CACHE_SIZE} messages`);
+    }
+  } catch (error) {
+    console.error('❌ Redis save message error:', error);
+  }
+}
+
+// Helper function to delete message from Redis
+async function deleteMessageFromRedis(roomId, messageId) {
+  try {
+    let messages = await redisClient.lRange(`room:${roomId}:messages`, 0, -1);
+    const originalLength = messages.length;
+    messages = messages.filter(msg => JSON.parse(msg).id !== messageId);
+    await redisClient.del(`room:${roomId}:messages`);
+    if (messages.length) {
+      await redisClient.rPush(`room:${roomId}:messages`, ...messages);
+    }
+    console.log(`[Redis Cache] Deleted message ${messageId} from room ${roomId}. Messages before: ${originalLength}, after: ${messages.length}`);
+  } catch (error) {
+    console.error('[Redis Cache] Error deleting message from Redis:', error);
+  }
+}
+
 const handleChatSocket = (io, socket) => {
+  console.log(`\n👤 New socket connection: ${socket.id}`);
+
   // Handle joining chat room
   socket.on('join-chat', async (roomId) => {
+    console.log('\n=== USER JOINING CHAT ===');
+    console.log(`Socket ${socket.id} joining room ${roomId}`);
+    
     try {
-      console.log(`[Chat] User ${socket.id} joining chat for room ${roomId}`);
-      
-      // Extract actual roomId from JWT if needed
       const actualRoomId = extractRoomId(roomId);
       
-      // Validate roomId is a valid ObjectId
-      if (!mongoose.Types.ObjectId.isValid(actualRoomId)) {
-        console.error('[Chat] Invalid room ID:', actualRoomId);
-        socket.emit('chat:error', { message: 'Invalid room ID' });
-        return;
-      }
+      // Join the socket room for this chat
+      socket.join(`chat-${actualRoomId}`);
+      console.log(`Socket ${socket.id} joined room chat-${actualRoomId}`);
       
-      const chatRoom = `chat-${actualRoomId}`;
-      socket.join(chatRoom);
+      // Try Redis first
+      let messages = await getMessagesFromRedis(actualRoomId);
       
-      // Initialize room messages cache if not exists
-      if (!roomMessagesCache.has(actualRoomId)) {
-        roomMessagesCache.set(actualRoomId, []);
-        
-        // Load recent messages from database
+      if (!messages || messages.length === 0) {
+        console.log('🔄 No Redis cache found, fetching from MongoDB...');
         const recentMessages = await ChatMessage.find({ 
           roomId: actualRoomId,
           isDeleted: false 
@@ -57,41 +105,31 @@ const handleChatSocket = (io, socket) => {
         .limit(50)
         .lean();
         
-        // Store in cache (in chronological order)
-        roomMessagesCache.set(actualRoomId, recentMessages.reverse());
+        messages = recentMessages.reverse();
+        console.log(`📥 Loaded ${messages.length} messages from MongoDB`);
         
-        console.log(`[Chat] Loaded ${recentMessages.length} messages from database for room ${actualRoomId}`);
+        // Save to Redis
+        for (const msg of messages) {
+          await saveMessageToRedis(actualRoomId, msg);
+        }
       }
       
-      // Send existing messages to the joining user
-      const messages = roomMessagesCache.get(actualRoomId) || [];
       socket.emit('chat:history', { messages });
+      console.log(`✅ Sent ${messages.length} messages to client`);
       
-      console.log(`[Chat] Sent ${messages.length} messages history to user ${socket.id}`);
     } catch (error) {
-      console.error('[Chat] Error joining chat room:', error);
+      console.error('❌ Error in join-chat:', error);
       socket.emit('chat:error', { message: 'Failed to join chat room' });
     }
   });
 
   // Handle new message
   socket.on('chat:send', async ({ roomId, message }) => {
+    console.log('\n=== NEW MESSAGE RECEIVED ===');
+    console.log(`From socket ${socket.id} in room ${roomId}`);
+    
     try {
-      console.log(`[Chat] New message from user ${socket.id} for room ${roomId}`);
-      
-      // Extract actual roomId from JWT if needed
       const actualRoomId = extractRoomId(roomId);
-      
-      // Validate roomId is a valid ObjectId
-      if (!mongoose.Types.ObjectId.isValid(actualRoomId)) {
-        console.error('[Chat] Invalid room ID for message:', actualRoomId);
-        socket.emit('chat:error', { message: 'Invalid room ID' });
-        return;
-      }
-      
-      const chatRoom = `chat-${actualRoomId}`;
-      
-      // Create message data
       const messageData = {
         roomId: actualRoomId,
         userId: message.userId || socket.userId,
@@ -100,39 +138,29 @@ const handleChatSocket = (io, socket) => {
         timestamp: new Date()
       };
       
-      // Save message to database
+      // Save to MongoDB
       const chatMessage = new ChatMessage(messageData);
       await chatMessage.save();
-      
-      // Add ID from database to message data
       messageData.id = chatMessage._id.toString();
       
-      // Update cache
-      const messagesCache = roomMessagesCache.get(actualRoomId) || [];
-      messagesCache.push(messageData);
+      // Save to Redis
+      await saveMessageToRedis(actualRoomId, messageData);
       
-      // Trim cache if it gets too large
-      if (messagesCache.length > MAX_CACHE_SIZE) {
-        messagesCache.splice(0, messagesCache.length - MAX_CACHE_SIZE);
-      }
+      // Broadcast
+      io.to(`chat-${actualRoomId}`).emit('chat:message', { 
+        message: {
+          id: messageData.id,
+          userId: messageData.userId,
+          user: messageData.userName,
+          text: messageData.text,
+          timestamp: messageData.timestamp.toISOString()
+        }
+      });
       
-      roomMessagesCache.set(actualRoomId, messagesCache);
+      console.log('✅ Message processed and broadcast successfully');
       
-      // Format message for clients
-      const formattedMessage = {
-        id: messageData.id,
-        userId: messageData.userId,
-        user: messageData.userName,
-        text: messageData.text,
-        timestamp: messageData.timestamp.toISOString()
-      };
-      
-      // Broadcast to all users in the room including sender
-      io.to(chatRoom).emit('chat:message', { message: formattedMessage });
-      
-      console.log(`[Chat] Message broadcast to room ${actualRoomId}`);
     } catch (error) {
-      console.error('[Chat] Error sending message:', error);
+      console.error('❌ Error in chat:send:', error);
       socket.emit('chat:error', { message: 'Failed to send message' });
     }
   });
@@ -155,10 +183,8 @@ const handleChatSocket = (io, socket) => {
       // Soft delete in database
       await ChatMessage.findByIdAndUpdate(messageId, { isDeleted: true });
       
-      // Update cache
-      const messagesCache = roomMessagesCache.get(actualRoomId) || [];
-      const updatedCache = messagesCache.filter(msg => msg.id !== messageId);
-      roomMessagesCache.set(actualRoomId, updatedCache);
+      // Remove from Redis
+      await deleteMessageFromRedis(actualRoomId, messageId);
       
       // Broadcast deletion to all users in the room
       io.to(`chat-${actualRoomId}`).emit('chat:deleted', { messageId });

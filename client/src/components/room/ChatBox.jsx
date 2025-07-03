@@ -94,7 +94,8 @@ function ChatBox({ show, messages = [], onClose, roomId, socket, currentUser }) 
           user: data.message.user,
           text: data.message.text,
           timestamp: data.message.timestamp,
-          isMe: isMine
+          isMe: isMine,
+          isSending: false
         };
         
         // Check if the message already exists to prevent duplicates
@@ -147,7 +148,7 @@ function ChatBox({ show, messages = [], onClose, roomId, socket, currentUser }) 
     if (!newMessage.trim() || !socket || !roomId) return;
     
     const messageData = {
-      text: newMessage,
+      text: newMessage.trim(),
       user: currentUser?.displayName || 'You',
       userId: currentUser?.uid,
       timestamp: new Date().toISOString()
@@ -159,7 +160,7 @@ function ChatBox({ show, messages = [], onClose, roomId, socket, currentUser }) 
       id: tempId,
       userId: currentUser?.uid,
       user: currentUser?.displayName || 'You',
-      text: newMessage,
+      text: newMessage.trim(),
       timestamp: new Date().toISOString(),
       isMe: true,
       isSending: true
