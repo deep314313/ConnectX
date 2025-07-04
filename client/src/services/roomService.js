@@ -14,22 +14,70 @@ export const createRoom = async (roomData) => {
 // Join a room
 export const joinRoom = async (roomName, passcode) => {
   try {
-    // Get user info from localStorage if available
+    // Get user info from localStorage
     const user = JSON.parse(localStorage.getItem('user'));
-    const userId = user?.uid || null;
-    const userName = user?.displayName || null;
+    let guestId = localStorage.getItem('guestId');
+    
+    // Generate and store guest ID if not exists
+    if (!user && !guestId) {
+      guestId = `guest_${Date.now()}`;
+      localStorage.setItem('guestId', guestId);
+    }
+
+    const userId = user?.uid || guestId;
+    const userName = user?.displayName || `Guest_${Date.now().toString().slice(-6)}`;
 
     const response = await axios.post(`${API_URL}/rooms/join`, {
-      name: roomName,  // Changed from roomName to name
+      name: roomName,
       passcode,
       userId,
       userName
     });
-    
-    // Response includes sessionToken for secure room access
+
+    // If guest user, update local history
+    if (!user) {
+      try {
+        // Get existing history
+        let guestHistory = [];
+        try {
+          guestHistory = JSON.parse(localStorage.getItem('guestRoomHistory') || '[]');
+        } catch (e) {
+          console.error('Error parsing guest history:', e);
+          guestHistory = [];
+        }
+
+        // Remove existing entry if present
+        guestHistory = guestHistory.filter(room => room.name !== roomName);
+
+        // Add new entry at the start
+        guestHistory.unshift({
+          _id: Date.now().toString(),
+          name: roomName,
+          lastJoined: new Date().toISOString(),
+          creatorName: response.data.room.creatorName
+        });
+
+        // Keep only last 5 rooms
+        if (guestHistory.length > 5) {
+          guestHistory = guestHistory.slice(0, 5);
+        }
+
+        // Save back to localStorage
+        localStorage.setItem('guestRoomHistory', JSON.stringify(guestHistory));
+        console.log('Updated guest history:', guestHistory);
+
+      } catch (storageError) {
+        console.error('Error updating guest history:', storageError);
+        // Don't throw error - allow join to succeed even if history fails
+      }
+    }
+
     return response.data;
   } catch (error) {
-    throw error.response?.data || error.message;
+    if (error.response?.data?.message) {
+      throw new Error(error.response.data.message);
+    }
+    throw new Error('Failed to join room. Please try again.');
   }
 };
 
@@ -55,4 +103,9 @@ export const deleteRoom = async (roomId) => {
   } catch (error) {
     throw error.response?.data || error.message;
   }
+};
+
+// Clear guest session
+export const clearGuestSession = () => {
+  localStorage.removeItem('guestId');
 }; 

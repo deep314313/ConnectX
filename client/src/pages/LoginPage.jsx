@@ -2,33 +2,73 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { handleGoogleLogin } from '../services/firebase';
 import { toast } from 'react-toastify';
+import axios from 'axios';
+import { API_URL } from '../services/api';
+import { RefreshCw, CheckCircle2 } from 'lucide-react';
 
 function LoginPage() {
   const navigate = useNavigate();
   const starsContainerRef = useRef(null);
-  const [guestName, setGuestName] = useState('');
-  const [showGuestInput, setShowGuestInput] = useState(false);
+  const [showGuestNames, setShowGuestNames] = useState(false);
+  const [suggestedNames, setSuggestedNames] = useState([]);
+  const [selectedName, setSelectedName] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const handleGuestAccess = () => {
-    if (!showGuestInput) {
-      setShowGuestInput(true);
+  // Fetch suggested names
+  const fetchSuggestedNames = async () => {
+    try {
+      setRefreshing(true);
+      const response = await axios.get(`${API_URL}/auth/guest/suggest-names?count=5`);
+      setSuggestedNames(response.data.suggestions);
+      setSelectedName(''); // Clear selection when refreshing
+    } catch (error) {
+      console.error('Error fetching suggested names:', error);
+      toast.error('Failed to fetch name suggestions');
+    } finally {
+      setRefreshing(false);
+      setLoading(false);
+    }
+  };
+
+  const handleGuestAccess = async () => {
+    if (!showGuestNames) {
+      setShowGuestNames(true);
+      setLoading(true);
+      fetchSuggestedNames();
       return;
     }
 
-    if (!guestName.trim()) {
-      toast.error('Please enter your name to continue as guest');
+    if (!selectedName) {
+      toast.warn('Please select a name to continue');
       return;
     }
 
-    // Create a consistent guest ID based on the name
-    const guestUser = {
-      uid: `guest_${guestName.toLowerCase().replace(/\s+/g, '_')}`,
-      displayName: guestName,
-      isGuest: true
-    };
+    try {
+      // Check if name is still available
+      const checkResponse = await axios.get(`${API_URL}/auth/guest/check-name?name=${selectedName}`);
+      if (!checkResponse.data.isAvailable) {
+        toast.error('This name is no longer available. Please choose another one.');
+        await fetchSuggestedNames();
+        return;
+      }
 
-    localStorage.setItem('user', JSON.stringify(guestUser));
-    navigate('/dashboard');
+      // Store guest info
+      const guestInfo = {
+        uid: `guest_${Date.now()}`,
+        displayName: selectedName,
+        isGuest: true
+      };
+      localStorage.setItem('guestId', guestInfo.uid);
+      localStorage.setItem('user', JSON.stringify(guestInfo));
+
+      // Show success message and redirect
+      toast.success('Welcome! Redirecting to dashboard...');
+      navigate('/dashboard');
+    } catch (error) {
+      console.error('Error logging in as guest:', error);
+      toast.error('Failed to log in. Please try again.');
+    }
   };
 
   const handleGoogleSignIn = async () => {
@@ -37,10 +77,12 @@ function LoginPage() {
       if (result && result.user) {
         // Remove guest data when logging in with Google
         localStorage.removeItem('guestRoomHistory');
+        localStorage.removeItem('guestId');
         navigate('/dashboard');
       }
     } catch (error) {
       console.error('Google login error:', error);
+      toast.error('Failed to log in with Google');
     }
   };
 
@@ -146,19 +188,47 @@ function LoginPage() {
             </button>
 
             {/* Guest Access Section */}
-            {showGuestInput ? (
-              <div className="space-y-3">
-                <input
-                  type="text"
-                  value={guestName}
-                  onChange={(e) => setGuestName(e.target.value)}
-                  placeholder="Enter your name"
-                  className="w-full bg-black/50 border border-primary/30 rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:border-primary"
-                  maxLength={20}
-                />
+            {showGuestNames ? (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-medium">Choose your guest name:</h3>
+                  <button
+                    onClick={fetchSuggestedNames}
+                    disabled={refreshing}
+                    className="p-2 text-gray-400 hover:text-red-500 transition-colors disabled:opacity-50"
+                    title="Get new suggestions"
+                  >
+                    <RefreshCw className={`w-5 h-5 ${refreshing ? 'animate-spin' : ''}`} />
+                  </button>
+                </div>
+
+                {loading ? (
+                  <div className="flex justify-center py-4">
+                    <RefreshCw className="w-6 h-6 text-red-500 animate-spin" />
+                  </div>
+                ) : (
+                  <div className="grid gap-3">
+                    {suggestedNames.map((name) => (
+                      <button
+                        key={name}
+                        onClick={() => setSelectedName(name)}
+                        className={`flex items-center justify-between p-3 rounded-lg border transition-all ${
+                          selectedName === name
+                            ? 'bg-red-500/10 border-red-500/50 text-red-500'
+                            : 'bg-black/20 border-gray-700/50 text-gray-300 hover:bg-black/30'
+                        }`}
+                      >
+                        <span className="font-medium">{name}</span>
+                        {selectedName === name && <CheckCircle2 className="w-5 h-5" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
                 <button
                   onClick={handleGuestAccess}
-                  className="w-full border-2 border-primary hover:bg-primary/10 text-white px-4 py-3 rounded-lg font-semibold transition-all"
+                  disabled={!selectedName}
+                  className="w-full border-2 border-primary hover:bg-primary/10 text-white px-4 py-3 rounded-lg font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Continue as Guest
                 </button>

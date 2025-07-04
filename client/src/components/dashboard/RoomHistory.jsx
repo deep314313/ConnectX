@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Copy, Trash2, LogIn, CheckCircle2, XCircle, AlertCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
@@ -50,16 +50,44 @@ const RoomHistory = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  const fetchGuestHistory = useCallback(() => {
+    try {
+      const guestHistory = JSON.parse(localStorage.getItem('guestRoomHistory') || '[]');
+      console.log('Fetched guest history:', guestHistory);
+      setRecentRooms(guestHistory);
+    } catch (err) {
+      console.error('Error fetching guest history:', err);
+      setRecentRooms([]);
+    }
+  }, []);
+
+  // Listen for storage changes
+  useEffect(() => {
+    const handleStorageChange = (e) => {
+      if (e.key === 'guestRoomHistory') {
+        console.log('Guest history changed, updating...');
+        fetchGuestHistory();
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, [fetchGuestHistory]);
+
   useEffect(() => {
     const fetchHistory = async () => {
       try {
         const user = JSON.parse(localStorage.getItem('user'));
-        if (!user) {
+        const userId = user?.uid || localStorage.getItem('guestId');
+        
+        if (!userId) {
           setRecentRooms([]);
+          setLoading(false);
           return;
         }
 
-        const response = await axios.get(`${API_URL}/rooms/history/${user.uid}`);
+        // Get history from server for both guests and regular users
+        const response = await axios.get(`${API_URL}/rooms/history/${userId}`);
         setRecentRooms(response.data);
       } catch (err) {
         setError('Failed to fetch room history');
@@ -156,16 +184,107 @@ const RoomHistory = () => {
   };
 
   const handleClearHistory = () => {
+    const user = JSON.parse(localStorage.getItem('user'));
+    const guestId = localStorage.getItem('guestId');
+    
+    if (!user && guestId) {
+      // For guest users, clear server-side history
+      axios.delete(`${API_URL}/rooms/history/${guestId}`)
+        .then(() => {
+          setRecentRooms([]);
+          toast(
+            <div className="flex items-start gap-3">
+              {toastStyles.success.icon}
+              <div>
+                <div className="font-medium">History Cleared</div>
+                <div className="text-sm text-gray-300 mt-1">
+                  Your room history has been cleared
+                </div>
+              </div>
+            </div>,
+            {
+              ...toastStyles.success,
+              autoClose: 3000,
+            }
+          );
+        })
+        .catch(err => {
+          console.error('Error clearing guest history:', err);
+          toast(
+            <div className="flex items-start gap-3">
+              {toastStyles.error.icon}
+              <div>
+                <div className="font-medium">Failed to Clear History</div>
+                <div className="text-sm text-gray-300 mt-1">
+                  Unable to clear room history. Please try again.
+                </div>
+              </div>
+            </div>,
+            {
+              ...toastStyles.error,
+              autoClose: 5000,
+            }
+          );
+        });
+      return;
+    }
+
+    // For logged-in users, show confirmation
     showClearHistoryConfirmation();
   };
 
   const handleJoinAgain = async (room) => {
     try {
-      const response = await joinRoom(room.roomName, room.passcode);
+      // Get stored room data from server for guests
+      const user = JSON.parse(localStorage.getItem('user'));
+      const guestId = localStorage.getItem('guestId');
+      
+      if (!user && guestId) {
+        // For guests, get room data from server including passcode
+        const historyResponse = await axios.get(`${API_URL}/rooms/history/${guestId}`);
+        const storedRoom = historyResponse.data.find(r => r.roomId === room.roomId);
+        if (storedRoom) {
+          room.passcode = storedRoom.passcode;
+        }
+      }
+
+      const response = await joinRoom(room.name || room.roomName, room.passcode || '');
+      
+      toast(
+        <div className="flex items-start gap-3">
+          {toastStyles.success.icon}
+          <div>
+            <div className="font-medium">Joining Room</div>
+            <div className="text-sm text-gray-300 mt-1">
+              Redirecting to {room.name || room.roomName}...
+            </div>
+          </div>
+        </div>,
+        {
+          ...toastStyles.success,
+          autoClose: 2000,
+        }
+      );
+
       navigate(`/room/session/${response.sessionToken}`);
     } catch (err) {
       console.error('Error joining room:', err);
-      alert('Failed to join room');
+      
+      toast(
+        <div className="flex items-start gap-3">
+          {toastStyles.error.icon}
+          <div>
+            <div className="font-medium">Failed to Join Room</div>
+            <div className="text-sm text-gray-300 mt-1">
+              {err.message || 'Room might have been deleted or you no longer have access'}
+            </div>
+          </div>
+        </div>,
+        {
+          ...toastStyles.error,
+          autoClose: 5000,
+        }
+      );
     }
   };
 
@@ -205,19 +324,12 @@ const RoomHistory = () => {
               className="flex items-center justify-between p-4 bg-black/50 rounded-lg border border-red-500/20 hover:border-red-500/30 transition-colors"
             >
               <div>
-                <h3 className="font-medium text-lg">{room.roomName}</h3>
+                <h3 className="font-medium text-lg">{room.roomName || room.name}</h3>
                 <p className="text-sm text-gray-400">
                   Last joined: {new Date(room.lastJoined).toLocaleDateString()}
                 </p>
               </div>
               <div className="flex items-center gap-3">
-                <button
-                  onClick={() => handleCopyPasscode(room.passcode)}
-                  className="p-2 text-gray-400 hover:text-red-500 transition-colors"
-                  title="Copy Passcode"
-                >
-                  <Copy className="w-5 h-5" />
-                </button>
                 <button
                   onClick={() => handleJoinAgain(room)}
                   className="px-4 py-2 bg-red-600/10 hover:bg-red-600/20 text-red-500 rounded-lg transition-all text-sm flex items-center gap-2"

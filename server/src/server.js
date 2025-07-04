@@ -9,6 +9,7 @@ const path = require('path');
 const fs = require('fs');
 
 // Import routes
+const authRoutes = require('./routes/authRoutes');
 const roomRoutes = require('./routes/roomRoutes');
 const fileRoutes = require('./routes/fileRoutes');
 
@@ -78,6 +79,7 @@ const startServer = async () => {
     });
 
     // API routes
+    app.use('/api/auth', authRoutes);
     app.use('/api/rooms', roomRoutes);
     app.use('/api/files', fileRoutes);
 

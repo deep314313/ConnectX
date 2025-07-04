@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
 
 const roomSchema = new mongoose.Schema({
   name: {
@@ -8,7 +9,8 @@ const roomSchema = new mongoose.Schema({
   },
   passcode: {
     type: String,
-    required: true
+    required: true,
+    select: false // Don't include password in queries by default
   },
   creatorId: {
     type: String,
@@ -36,5 +38,19 @@ const roomSchema = new mongoose.Schema({
     default: Date.now
   }
 });
+
+// Hash password before saving
+roomSchema.pre('save', async function(next) {
+  if (this.isModified('passcode')) {
+    this.passcode = await bcrypt.hash(this.passcode, 10);
+  }
+  next();
+});
+
+// Method to compare passcode
+roomSchema.methods.comparePasscode = async function(candidatePasscode) {
+  const room = await this.constructor.findById(this._id).select('+passcode');
+  return bcrypt.compare(candidatePasscode, room.passcode);
+};
 
 module.exports = mongoose.model('Room', roomSchema);
